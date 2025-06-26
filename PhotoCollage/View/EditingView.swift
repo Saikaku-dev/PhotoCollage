@@ -7,42 +7,6 @@
 import SwiftUI
 import UIKit
 
-import Foundation
-import Combine
-
-// テキスト要素を管理する構造体
-struct TextElement: Identifiable {
-    let id = UUID()
-    var title: String
-    var position: CGPoint
-    var scale: CGFloat = 1.0
-}
-
-// 編集画面のビューモデル
-class EditingViewModel: ObservableObject {
-    @Published var addedTexts: [TextElement] = []
-    
-    // テキストを追加するメソッド
-    func addText(title: String, position: CGPoint) {
-        let newText = TextElement(title: title, position: position)
-        addedTexts.append(newText)
-    }
-    
-    // ビューを画像に変換するメソッド
-    func snapshot(contentView: some View, size: CGSize) -> UIImage {
-        let controller = UIHostingController(rootView: contentView)
-        let view = controller.view!
-        
-        view.bounds = CGRect(origin: .zero, size: size)
-        view.backgroundColor = .clear
-        
-        let renderer = UIGraphicsImageRenderer(size: size)
-        return renderer.image { ctx in
-            view.drawHierarchy(in: view.bounds, afterScreenUpdates: true)
-        }
-    }
-}
-
 // 編集画面ビュー
 struct EditingView: View {
     @StateObject var vm = EditingViewModel()
@@ -53,6 +17,8 @@ struct EditingView: View {
     @State private var showTextEditor: Bool = false
     @State private var finalImage: UIImage? = nil
     @State private var showSaveSheet = false
+    @State private var activeTextId: UUID? = nil
+    @State private var currentScale: CGFloat = 1.0
     
     @State var scale: CGFloat = 1.0
     @State var lastScale: CGFloat = 1.0
@@ -105,7 +71,56 @@ struct EditingView: View {
                             Text(text.title)
                                 .foregroundColor(.black)
                                 .position(text.position)
+                                .scaleEffect(text.id == activeTextId ? currentScale : text.scale)
+                                .contentShape(Rectangle())
+                                .gesture(
+                                    SimultaneousGesture(
+                                        DragGesture()
+                                            .onChanged { value in
+                                                if let index = vm.addedTexts.firstIndex(where: { $0.id == text.id }) {
+                                                    vm.addedTexts[index].position = value.location
+                                                }
+                                            },
+                                        MagnificationGesture()
+                                            .onChanged { value in
+                                                activeTextId = text.id
+                                                currentScale = value
+                                            }
+                                            .onEnded { value in
+                                                vm.updateTextElement(id: text.id, scale: value)
+                                                activeTextId = nil
+                                                currentScale = 1.0
+                                            }
+                                    )
+                                )
+                                .onTapGesture {
+                                    self.text = ""
+                                    self.textPosition = CGPoint(x: UIScreen.main.bounds.width / 2,
+                                                                y: UIScreen.main.bounds.height / 2)
+                                    self.activeTextId = nil
+                                    self.showTextEditor = true
+                                    DispatchQueue.main.async {
+                                        focused = true
+                                    }
+                                }
                         }
+                        
+                        .onChange(of: focused) {
+                            if !focused && showTextEditor {
+                                if !text.isEmpty {
+                                    if let id = activeTextId,
+                                       let index = vm.addedTexts.firstIndex(where: { $0.id == id }) {
+                                        vm.addedTexts[index].title = text
+                                        vm.addedTexts[index].position = textPosition!
+                                    } else {
+                                        vm.addText(title: text, position: textPosition!)
+                                    }
+                                }
+                                resetText()
+                            }
+                        }
+
+                        
                     }
                     
                 }
@@ -191,6 +206,7 @@ struct EditingView: View {
         showTextEditor = false
         textPosition = nil
         text = ""
+        activeTextId = nil
     }
     
     // スクリーンショット用ビュー
@@ -205,6 +221,7 @@ struct EditingView: View {
                     Text(text.title)
                         .foregroundColor(.black)
                         .position(text.position)
+                        .scaleEffect(text.scale)
                 }
             }
         }
@@ -224,10 +241,11 @@ struct EditingView: View {
                     Text(text.title)
                         .foregroundColor(.black)
                         .position(text.position)
+                        .scaleEffect(text.scale)
                 }
             }
         }
-        .frame(width: UIScreen.main.bounds.width, height: UIScreen.main.bounds.height)
+            .frame(width: UIScreen.main.bounds.width, height: UIScreen.main.bounds.height)
         
         // ビューを画像に変換
         let collageImage = contentView.asImage()
